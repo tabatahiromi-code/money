@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {parseOFX,decodeStatement,createDuplicateTracker} from './dist/ofx-model.mjs';
+import {parseOFX,decodeStatement,createDuplicateTracker,detectStatementFormat} from './dist/ofx-model.mjs';
 import {mapCSV,parseCSV} from './dist/import-model.mjs';
 import {validData} from './dist/model.mjs';
 const transaction=(id,amount='-1280.00',date='20261017120000[+9:JST]')=>`<STMTTRN><TRNTYPE>DEBIT<DTPOSTED>${date}<TRNAMT>${amount}<FITID>${id}<NAME>スーパー &amp; カフェ<MEMO>買い物</STMTTRN>`;
@@ -17,3 +17,8 @@ const fakeComment=`<!-- ${bank(transaction('hidden'))} -->`;assert.equal(parseOF
 const cp=Buffer.concat([Buffer.from('OFXHEADER:100\nENCODING:USASCII\nCHARSET:1252\n<OFX><NAME>Caf'),Buffer.from([0xe9]),Buffer.from('</NAME></OFX>')]);assert.match(decodeStatement(cp,'auto',true),/Café/);assert.equal(decodeStatement(new Uint8Array([0xff,0xfe,0x61,0,0x62,0])),'ab');assert.match(decodeStatement(new TextEncoder().encode(xml),'auto',true),/日本|&#x65E5;/);
 const ownCSV='日付,種類,カテゴリ,金額（円）,メモ,口座・カード名\n2026-10-17,支出,食費,1280,スーパー,銀行\n2026-10-18,収入,給与,300000,給与,銀行';const mapped=mapCSV(parseCSV(ownCSV).slice(1),{date:0,kind:1,amount:3,note:4,source:'銀行',mode:'kind'});assert.equal(mapped[0].entry.type,'expense');assert.equal(mapped[1].entry.type,'income');assert.ok(mapCSV([['2026-10-17','不明','100']],{date:0,kind:1,amount:2,source:'銀行',mode:'kind'})[0].error);
 console.log('OFX SGML/XML・銀行/カード・通貨/日付/金額・取引IDの重複・文字コード・CSV種類列のテスト成功');
+
+const ofxBytes=new TextEncoder().encode(ofx(bank(transaction('pick'))));
+for(const name of ['statement.ofx','statement.OFX','download.txt','statement.xml','download','bank.csv'])assert.equal(detectStatementFormat({name,type:'application/octet-stream'},ofxBytes),'ofx');
+assert.equal(detectStatementFormat({name:'statement.csv'},new TextEncoder().encode(ownCSV)),'csv');assert.equal(detectStatementFormat({name:'download'},new TextEncoder().encode(ownCSV)),'csv');assert.equal(detectStatementFormat({name:'document.bin'},new TextEncoder().encode('%PDF-1.4\n')),'pdf');assert.equal(detectStatementFormat({name:'image.png'},new Uint8Array([137,80,78,71,0,0])),'unknown');
+const utf16ofx=Buffer.concat([Buffer.from([255,254]),Buffer.from(xml,'utf16le')]);assert.equal(detectStatementFormat({name:'download.txt'},utf16ofx),'ofx');console.log('拡張子やMIMEに依存しないOFXファイル判定を確認しました');

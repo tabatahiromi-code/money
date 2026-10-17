@@ -1,35 +1,35 @@
-import {parseOFX,decodeStatement,createDuplicateTracker} from './ofx-model.mjs';
+import {parseOFX,decodeStatement,createDuplicateTracker,detectStatementFormat} from './ofx-model.mjs';
 import {parseCSV,mapCSV} from './import-model.mjs';
 import {extractTransactions} from './pdf-model.mjs';
 import {validData} from './model.mjs';
 export function setupImporter({getData,persist,onImported,toast}){
- const $=id=>document.getElementById(id),yen=n=>'¥'+n.toLocaleString('ja-JP');let file=null,csvRows=[],candidates=[],controller=null,busy=false,run=0,isCSV=false,isOFX=false,ofxData=null;
+ const $=id=>document.getElementById(id),yen=n=>'¥'+n.toLocaleString('ja-JP');let file=null,csvRows=[],candidates=[],controller=null,busy=false,run=0,isCSV=false,isOFX=false,ofxData=null,fileBytes=null;
  const status=(message,error=false)=>{$('csv-status').textContent=message;$('csv-status').classList.toggle('review-error',error);};
  function previewError(message){document.querySelectorAll('[data-preview-error]').forEach(el=>{el.textContent=message;el.hidden=!message;});}const previewOff=()=>{$('csv-preview-panel').hidden=true;candidates=[];previewError('');};
  $('csv-open').onclick=()=>$('csv-dialog').showModal();
  const stop=()=>{controller?.abort();};$('pdf-cancel').onclick=stop;
  $('csv-close').onclick=()=>{stop();$('csv-dialog').close();};$('csv-dialog').addEventListener('cancel',stop);
- $('csv-dialog').addEventListener('close',()=>{$('pdf-password').value='';});
+ $('csv-dialog').addEventListener('close',()=>{$('pdf-password').value='';fileBytes=null;});
  $('pdf-year').value=new Date().getFullYear();
  $('csv-file').onchange=async()=>{
- stop();run++;file=$('csv-file').files[0]||null;csvRows=[];ofxData=null;$('ofx-options').hidden=true;previewOff();$('csv-mapping').hidden=true;$('pdf-text-panel').hidden=true;$('pdf-text').value='';$('pdf-password').value='';$('pdf-progress').hidden=true;$('pdf-options').hidden=true;$('csv-file-options').hidden=true;
+ stop();run++;file=$('csv-file').files[0]||null;csvRows=[];ofxData=null;fileBytes=null;$('ofx-options').hidden=true;previewOff();$('csv-mapping').hidden=true;$('pdf-text-panel').hidden=true;$('pdf-text').value='';$('pdf-password').value='';$('pdf-progress').hidden=true;$('pdf-options').hidden=true;$('csv-file-options').hidden=true;
  if(!file)return;
  if(file.size>20*1024*1024){status('20MB以下のファイルを選んでください。',true);file=null;return;}
- isCSV=/\.(csv|tsv|txt)$/i.test(file.name);isOFX=/\.ofx$/i.test(file.name);$('csv-header-label').hidden=isOFX;
+ let format;const thisRun=run;try{status('ファイルの種類を確認しています…');const selectedBytes=new Uint8Array(await file.arrayBuffer());if(thisRun!==run)return;fileBytes=selectedBytes;format=detectStatementFormat(file,fileBytes);}catch{if(thisRun===run)status('ファイルを開けませんでした。ダウンロードが完了したファイルを選び直してください。',true);return;}isCSV=format==='csv';isOFX=format==='ofx';$('csv-header-label').hidden=isOFX;
  if(isOFX){$('csv-file-options').hidden=false;await loadOFX();}
  else if(isCSV){$('csv-file-options').hidden=false;await loadCSV();}
- else if(/\.pdf$/i.test(file.name)){$('pdf-options').hidden=false;const image=!/\.pdf$/i.test(file.name);for(const id of ['pdf-from','pdf-to','pdf-password','pdf-method'])$(id).disabled=image;$('pdf-method').value=image?'ocr':'auto';status(`${file.name} を選択しました。「PDFから取引を読み取る」を押してください。`);}
+ else if(format==='pdf'){if(file.type!=='application/pdf'&&!/\.pdf$/i.test(file.name))file=new File([fileBytes],file.name||'statement.pdf',{type:'application/pdf'});$('pdf-options').hidden=false;for(const id of ['pdf-from','pdf-to','pdf-password','pdf-method'])$(id).disabled=false;$('pdf-method').value='auto';status(`${file.name} を選択しました。「PDFから取引を読み取る」を押してください。`);}
  else {status('OFX・CSV・PDF形式を選んでください。',true);file=null;}
  };
  async function loadOFX(){
  if(!file||!isOFX)return;const thisRun=++run;previewOff();$('ofx-options').hidden=true;ofxData=null;
- try{const bytes=new Uint8Array(await file.arrayBuffer());if(thisRun!==run)return;ofxData=parseOFX(decodeStatement(bytes,$('csv-encoding').value,true));$('ofx-options').hidden=false;$('ofx-summary').textContent=`${ofxData.accounts.join(' ／ ')} — ${ofxData.rows.length}件。${ofxData.missingIds?'取引IDがない行は、日付・金額・摘要・口座名で重複候補を判断します。':''}`;status('OFXを読み込みました。口座・カード名を入力し、取り込み内容を確認してください。');}
+ try{const bytes=fileBytes||new Uint8Array(await file.arrayBuffer());if(thisRun!==run)return;ofxData=parseOFX(decodeStatement(bytes,$('csv-encoding').value,true));$('ofx-options').hidden=false;$('ofx-summary').textContent=`${ofxData.accounts.join(' ／ ')} — ${ofxData.rows.length}件。${ofxData.missingIds?'取引IDがない行は、日付・金額・摘要・口座名で重複候補を判断します。':''}`;status('OFXを読み込みました。口座・カード名を入力し、取り込み内容を確認してください。');}
  catch(e){status(e.message||'OFXを読み込めませんでした。文字コードを指定して再度お試しください。',true);}
  }
  $('ofx-preview').onclick=()=>{const name=source();if(!name)return;if(!ofxData){previewError('OFXを読み込み直してください。ファイルを選び直すと再読み込みできます。');return;}const known=createDuplicateTracker(getData().entries);candidates=ofxData.rows.map(r=>{const entry={...r.entry,source:name},duplicate=known.has(entry);known.add(entry);return {...r,entry,duplicate,selected:!r.error&&!duplicate};});showReview(false);};
  async function loadCSV(){
  if(!file||!isCSV)return;const thisRun=++run;previewOff();$('csv-mapping').hidden=true;
- try{const bytes=new Uint8Array(await file.arrayBuffer());if(thisRun!==run)return;const text=decodeStatement(bytes,$('csv-encoding').value);
+ try{const bytes=fileBytes||new Uint8Array(await file.arrayBuffer());if(thisRun!==run)return;const text=decodeStatement(bytes,$('csv-encoding').value);
  csvRows=parseCSV(text);const header=Number($('csv-header').value);if(!Number.isInteger(header)||header<1||header>100||!csvRows[header-1]||csvRows.length<=header)throw Error('見出し行と、その後の取引データがあるか確認してください。');
  const headers=csvRows[header-1];if(headers.length<2)throw Error('CSVの列を読み取れませんでした。カンマ・タブ・セミコロン区切りに対応しています。');
  for(const key of ['date','note','amount','debit','credit','kind']){const select=$('map-'+key);select.replaceChildren(new Option('指定しない',''),...headers.map((h,i)=>new Option(`${i+1}: ${h.trim().slice(0,70)||'（空欄）'}`,String(i))));}
@@ -46,7 +46,7 @@ export function setupImporter({getData,persist,onImported,toast}){
  if(mapping.mode==='kind'&&mapping.kind===''){previewError('収入・支出の種類の列を指定してください。');toast('収入・支出の種類の列を指定してください。');return;}const cols=[...(mapping.mode==='kind'?[mapping.kind]:[]),mapping.date,...(mapping.mode==='separate'?[mapping.debit,mapping.credit].filter(x=>x!==''):[mapping.amount])];if(mapping.date===''||(mapping.mode==='separate'?mapping.debit===''&&mapping.credit==='':mapping.amount==='')){previewError('日付と金額の列を指定してください。');toast('日付と金額の列を指定してください。');return;}if(new Set(cols).size!==cols.length){previewError('日付・金額・種類の列が重複しています。異なる列を指定してください。');toast('日付・入金・出金には異なる列を指定してください。');return;}
  const rows=mapCSV(csvRows.slice(Number(mapping.header)),mapping,getData().entries);candidates=rows.map(r=>({...r,entry:r.entry||{date:'',type:'expense',amount:0,note:(r.raw?.join(' ')||'').slice(0,500),category:'その他',source:name},selected:!!r.entry&&!r.duplicate,raw:r.raw?.join(' ')||''}));showReview(false);
  };
- function setBusy(value){busy=value;for(const id of ['csv-file','pdf-read','csv-source','pdf-from','pdf-to','pdf-method','pdf-password'])$(id).disabled=value;const image=file&&!/\.pdf$/i.test(file.name);if(!value&&image)for(const id of ['pdf-from','pdf-to','pdf-password','pdf-method'])$(id).disabled=true;$('pdf-cancel').hidden=!value;}
+ function setBusy(value){busy=value;for(const id of ['csv-file','pdf-read','csv-source','pdf-from','pdf-to','pdf-method','pdf-password'])$(id).disabled=value;$('pdf-cancel').hidden=!value;}
  $('pdf-read').onclick=async()=>{
  if(busy||!file)return;const name=source();if(!name)return;const selectedFile=file;const thisRun=++run;controller=new AbortController();setBusy(true);previewOff();$('pdf-text-panel').hidden=true;$('pdf-progress').hidden=false;$('pdf-progress').value=0;
  try{const {readDocument}=await import('./pdf-reader.mjs');const pages=await readDocument(selectedFile,{mode:$('pdf-method').value,password:$('pdf-password').value,start:$('pdf-from').value,end:$('pdf-to').value},(message,progress)=>{if(thisRun!==run)return;status(message);if(progress===null)$('pdf-progress').removeAttribute('value');else $('pdf-progress').value=progress;},controller.signal);

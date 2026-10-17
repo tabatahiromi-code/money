@@ -45,3 +45,14 @@ export function parseOFX(input){
  }
  if(!rows.length)throw Error('OFXに取引データがありません。');return {rows,accounts:[...new Set(accounts)],missingIds};
 }
+
+export function detectStatementFormat(file,bytes){
+ const data=bytes instanceof Uint8Array?bytes:new Uint8Array(bytes);const name=String(file.name||'').normalize('NFKC').trim();
+ if(new TextDecoder('windows-1252').decode(data.slice(0,1024)).includes('%PDF-'))return 'pdf';
+ let text='';try{text=decodeStatement(data.slice(0,65536),'auto',true);}catch{const encoding=data[0]===0xff&&data[1]===0xfe?'utf-16le':data[0]===0xfe&&data[1]===0xff?'utf-16be':'utf-8';text=new TextDecoder(encoding).decode(data.slice(0,65536));}
+ if(/<(?:[A-Za-z_][\w.-]*:)?OFX(?:\s|>)/i.test(text)||/\.(ofx|qfx)$/i.test(name))return 'ofx';
+ if(/\.pdf$/i.test(name))return 'pdf';
+ if(/\.(csv|tsv|txt)$/i.test(name))return 'csv';
+ if(!text.includes('\0')){const lines=text.split(/\r?\n/).filter(x=>x.trim());if(lines.length>1&&[',','\t',';'].some(d=>lines.slice(0,20).filter(line=>line.includes(d)).length>=2))return 'csv';}
+ return 'unknown';
+}
