@@ -34,7 +34,7 @@ export function parseOFX(input){
  for(const transaction of transactions){const fitId=field(transaction,'FITID'),dateText=field(transaction,'DTPOSTED'),amountText=field(transaction,'TRNAMT');
  if(fitId.length>500)throw Error('OFXの取引IDが長すぎます。ファイルを確認してください。');
  const transactionCurrency=field(transaction,'CURSYM').toUpperCase();if(transactionCurrency&&transactionCurrency!=='JPY')throw Error('外貨取引を含むOFXには対応していません。円建ての明細を選んでください。');
- const name=field(transaction,'NAME'),memo=field(transaction,'MEMO'),note=[name,...(memo&&memo!==name?[memo]:[])].filter(Boolean).join(' / ');const entry={date:'',type:'expense',amount:0,note,source:'',category:'その他'};const errors=[];
+ const name=field(transaction,'NAME'),memo=field(transaction,'MEMO'),note=[name,...(memo&&memo!==name?[memo]:[])].filter(Boolean).join(' / ');const entry={date:'',type:'expense',amount:0,note,source:'',category:'その他',recordKind:kind==='カード'?'card_detail':'cash_flow'};const errors=[];
  if(fitId)entry.ofxKey=JSON.stringify([kind,bank,account,currency,fitId]);else missingIds++;
  try{if(!/^\d{8}(?:\d{6}(?:\.\d+)?)?(?:\[[^\]]+\])?$/.test(dateText))throw Error('OFXの日付を確認してください');entry.date=normalizeDate(dateText.slice(0,8));}catch(e){errors.push(e.message);}
  try{const value=moneyValue(amountText);if(!value)throw Error('金額が空欄または0です');entry.amount=Math.abs(value);entry.type=value<0?'expense':'income';}catch(e){errors.push(e.message);}

@@ -1,0 +1,11 @@
+import {validData} from './model.mjs';
+import {cardHistory} from './accounting-model.mjs';
+const money=n=>'¥'+n.toLocaleString('ja-JP');
+const $=id=>document.getElementById(id),key='kotsukotsu-money-v1';
+const currentMonth=()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;};
+const requested=new URLSearchParams(window.location.search).get('month');
+$('usage-month').value=/^\d{4}-(0[1-9]|1[0-2])$/.test(requested||'')?requested:currentMonth();
+function element(tag,text,className){const el=document.createElement(tag);el.textContent=text;if(className)el.className=className;return el;}
+function render(){try{const raw=localStorage.getItem(key),data=raw?JSON.parse(raw):{version:1,entries:[],budgets:{}};if(!validData(data))throw Error();const rows=cardHistory(data.entries,$('usage-month').value,data.settings);$('count').textContent=`${rows.length}件`;$('card-entries').replaceChildren();for(const row of rows){const item=element('div','','transaction'),info=element('div','','tx-info');info.append(element('strong',row.note||row.category),element('small',`${row.date.replaceAll('-','/')} · ${row.source||'カード'} · ${row.category}`));const amount=element('div','','card-amount');amount.append(element('span',money(row.amount),'tx-amount'));if(row.type==='income')amount.append(element('small','入金・返金等'));const edit=element('a','編集','tool-button');edit.href=`index.html?edit=${encodeURIComponent(row.id)}`;item.append(info,amount,edit);$('card-entries').append(item);}if(!rows.length)$('card-entries').append(element('p','この月のカード利用履歴はありません。','empty'));$('cards-error').hidden=true;}catch{$('card-entries').replaceChildren();$('count').textContent='—';$('cards-error').textContent='カード利用履歴を読み込めませんでした。ブラウザの保存設定と家計簿データを確認してください。';$('cards-error').hidden=false;}}
+function shift(delta){const [year,month]=$('usage-month').value.split('-').map(Number),date=new Date(Date.UTC(year,month-1+delta,1));$('usage-month').value=`${date.getUTCFullYear()}-${String(date.getUTCMonth()+1).padStart(2,'0')}`;render();}
+$('prev').onclick=()=>shift(-1);$('next').onclick=()=>shift(1);$('today').onclick=()=>{$('usage-month').value=currentMonth();render();};$('usage-month').onchange=()=>{if($('usage-month').value)render();};window.addEventListener('storage',e=>{if(e.key===key)render();});window.addEventListener('pageshow',render);render();
