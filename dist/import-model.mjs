@@ -18,7 +18,7 @@ export function mapCSV(rows, mapping, existing=[]){
  const known=new Set(existing.map(fingerprint));return rows.map((row,index)=>{try{
  const get=k=>mapping[k]===undefined||mapping[k]===''?'':(row[Number(mapping[k])]||'');const date=normalizeDate(get('date'));let amount,type;
  if(mapping.mode==='separate'){const debit=moneyValue(get('debit')),credit=moneyValue(get('credit'));if(debit&&credit)throw Error('入金と出金の両方に金額があります');if(debit){amount=Math.abs(debit);type='expense';}else if(credit){amount=Math.abs(credit);type='income';}}
- else{const n=moneyValue(get('amount'));if(n!==null){amount=Math.abs(n);type=mapping.mode==='income'?'income':mapping.mode==='signed'?(n<0?'expense':'income'):'expense';}}
+ else{const n=moneyValue(get('amount'));if(n!==null){amount=Math.abs(n);if(mapping.mode==='kind'){const kind=get('kind').trim().toLowerCase();if(['支出','出金','支払い','expense','debit'].includes(kind))type='expense';else if(['収入','入金','income','credit'].includes(kind))type='income';else throw Error('種類は収入・支出（または入金・出金）を指定してください');}else type=mapping.mode==='income'?'income':mapping.mode==='signed'?(n<0?'expense':'income'):'expense';}}
  if(!amount)throw Error('金額が空欄または0です');const note=get('note').trim(),source=mapping.source.trim();if(note.length>500)throw Error('摘要が500文字を超えています');const e={date,type,amount,note,source,category:'その他'};const key=fingerprint(e),duplicate=known.has(key);known.add(key);return {entry:e,duplicate,row:index+Number(mapping.header||1)+1};
  }catch(error){return {error:error.message,row:index+Number(mapping.header||1)+1,raw:row};}});
 }

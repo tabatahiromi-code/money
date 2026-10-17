@@ -1,8 +1,9 @@
-import {parseCSV,mapCSV,fingerprint} from './import-model.mjs';
+import {parseOFX,decodeStatement,createDuplicateTracker} from './ofx-model.mjs';
+import {parseCSV,mapCSV} from './import-model.mjs';
 import {extractTransactions} from './pdf-model.mjs';
 import {validData} from './model.mjs';
 export function setupImporter({getData,persist,onImported,toast}){
- const $=id=>document.getElementById(id),yen=n=>'¥'+n.toLocaleString('ja-JP');let file=null,csvRows=[],candidates=[],controller=null,busy=false,run=0,isCSV=false;
+ const $=id=>document.getElementById(id),yen=n=>'¥'+n.toLocaleString('ja-JP');let file=null,csvRows=[],candidates=[],controller=null,busy=false,run=0,isCSV=false,isOFX=false,ofxData=null;
  const status=(message,error=false)=>{$('csv-status').textContent=message;$('csv-status').classList.toggle('review-error',error);};
  const previewOff=()=>{$('csv-preview-panel').hidden=true;candidates=[];};
  $('csv-open').onclick=()=>$('csv-dialog').showModal();
@@ -11,32 +12,38 @@ export function setupImporter({getData,persist,onImported,toast}){
  $('csv-dialog').addEventListener('close',()=>{$('pdf-password').value='';});
  $('pdf-year').value=new Date().getFullYear();
  $('csv-file').onchange=async()=>{
- stop();run++;file=$('csv-file').files[0]||null;csvRows=[];previewOff();$('csv-mapping').hidden=true;$('pdf-text-panel').hidden=true;$('pdf-text').value='';$('pdf-password').value='';$('pdf-progress').hidden=true;$('pdf-options').hidden=true;$('csv-file-options').hidden=true;
+ stop();run++;file=$('csv-file').files[0]||null;csvRows=[];ofxData=null;$('ofx-options').hidden=true;previewOff();$('csv-mapping').hidden=true;$('pdf-text-panel').hidden=true;$('pdf-text').value='';$('pdf-password').value='';$('pdf-progress').hidden=true;$('pdf-options').hidden=true;$('csv-file-options').hidden=true;
  if(!file)return;
  if(file.size>20*1024*1024){status('20MB以下のファイルを選んでください。',true);file=null;return;}
- isCSV=/\.(csv|tsv|txt)$/i.test(file.name);
- if(isCSV){$('csv-file-options').hidden=false;await loadCSV();}
+ isCSV=/\.(csv|tsv|txt)$/i.test(file.name);isOFX=/\.ofx$/i.test(file.name);$('csv-header-label').hidden=isOFX;
+ if(isOFX){$('csv-file-options').hidden=false;await loadOFX();}
+ else if(isCSV){$('csv-file-options').hidden=false;await loadCSV();}
  else if(/\.pdf$/i.test(file.name)){$('pdf-options').hidden=false;const image=!/\.pdf$/i.test(file.name);for(const id of ['pdf-from','pdf-to','pdf-password','pdf-method'])$(id).disabled=image;$('pdf-method').value=image?'ocr':'auto';status(`${file.name} を選択しました。「PDFから取引を読み取る」を押してください。`);}
- else {status('PDFまたはCSV形式を選んでください。',true);file=null;}
+ else {status('OFX・CSV・PDF形式を選んでください。',true);file=null;}
  };
+ async function loadOFX(){
+ if(!file||!isOFX)return;const thisRun=++run;previewOff();$('ofx-options').hidden=true;ofxData=null;
+ try{const bytes=new Uint8Array(await file.arrayBuffer());if(thisRun!==run)return;ofxData=parseOFX(decodeStatement(bytes,$('csv-encoding').value,true));$('ofx-options').hidden=false;$('ofx-summary').textContent=`${ofxData.accounts.join(' ／ ')} — ${ofxData.rows.length}件。${ofxData.missingIds?'取引IDがない行は、日付・金額・摘要・口座名で重複候補を判断します。':''}`;status('OFXを読み込みました。口座・カード名を入力し、取り込み内容を確認してください。');}
+ catch(e){status(e.message||'OFXを読み込めませんでした。文字コードを指定して再度お試しください。',true);}
+ }
+ $('ofx-preview').onclick=()=>{const name=source();if(!name||!ofxData)return;const known=createDuplicateTracker(getData().entries);candidates=ofxData.rows.map(r=>{const entry={...r.entry,source:name},duplicate=known.has(entry);known.add(entry);return {...r,entry,duplicate,selected:!r.error&&!duplicate};});showReview(false);};
  async function loadCSV(){
  if(!file||!isCSV)return;const thisRun=++run;previewOff();$('csv-mapping').hidden=true;
- try{const bytes=new Uint8Array(await file.arrayBuffer());if(thisRun!==run)return;let text,encoding=$('csv-encoding').value;
- if(encoding==='auto'){try{text=new TextDecoder('utf-8',{fatal:true}).decode(bytes);}catch{text=new TextDecoder('shift_jis',{fatal:true}).decode(bytes);}}else text=new TextDecoder(encoding,{fatal:true}).decode(bytes);
+ try{const bytes=new Uint8Array(await file.arrayBuffer());if(thisRun!==run)return;const text=decodeStatement(bytes,$('csv-encoding').value);
  csvRows=parseCSV(text);const header=Number($('csv-header').value);if(!Number.isInteger(header)||header<1||header>100||!csvRows[header-1]||csvRows.length<=header)throw Error('見出し行と、その後の取引データがあるか確認してください。');
  const headers=csvRows[header-1];if(headers.length<2)throw Error('CSVの列を読み取れませんでした。カンマ・タブ・セミコロン区切りに対応しています。');
- for(const key of ['date','note','amount','debit','credit']){const select=$('map-'+key);select.replaceChildren(new Option('指定しない',''),...headers.map((h,i)=>new Option(`${i+1}: ${h.trim().slice(0,70)||'（空欄）'}`,String(i))));}
- const auto=(key,regex)=>{const i=headers.findIndex(h=>regex.test(h));if(i>=0)$('map-'+key).value=String(i);};auto('date',/利用日|取引日|日付|年月日|date/i);auto('note',/摘要|適用|利用店|店名|内容|メモ|description|merchant/i);auto('amount',/利用金額|入出金額|取引金額|金額|amount/i);auto('debit',/出金|支払金額|お支払|引出|debit|withdraw/i);auto('credit',/入金|預入|お預|credit|deposit/i);
- $('csv-mode').value=$('map-debit').value!==''&&$('map-credit').value!==''?'separate':'expense';modeChanged();$('csv-mapping').hidden=false;status(`${file.name}：取引データ ${csvRows.length-header} 行。文字化けがある場合は文字コードを変更してください。`);
+ for(const key of ['date','note','amount','debit','credit','kind']){const select=$('map-'+key);select.replaceChildren(new Option('指定しない',''),...headers.map((h,i)=>new Option(`${i+1}: ${h.trim().slice(0,70)||'（空欄）'}`,String(i))));}
+ const auto=(key,regex)=>{const i=headers.findIndex(h=>regex.test(h));if(i>=0)$('map-'+key).value=String(i);};auto('date',/利用日|取引日|日付|年月日|date/i);auto('note',/摘要|適用|利用店|店名|内容|メモ|description|merchant/i);auto('amount',/利用金額|入出金額|取引金額|金額|amount/i);auto('debit',/出金|支払金額|お支払|引出|debit|withdraw/i);auto('credit',/入金|預入|お預|credit|deposit/i);auto('kind',/種類|収支区分|入出金区分|type/i);
+ $('csv-mode').value=$('map-debit').value!==''&&$('map-credit').value!==''?'separate':$('map-kind').value!==''?'kind':'expense';modeChanged();$('csv-mapping').hidden=false;status(`${file.name}：取引データ ${csvRows.length-header} 行。文字化けがある場合は文字コードを変更してください。`);
  }catch(e){status(e.message||'CSVを読み込めませんでした。文字コードを変更してみてください。',true);}
  }
- $('csv-encoding').onchange=loadCSV;$('csv-header').onchange=loadCSV;
- function modeChanged(){const separate=$('csv-mode').value==='separate';$('single-amount-label').hidden=separate;$('debit-label').hidden=!separate;$('credit-label').hidden=!separate;previewOff();}
- $('csv-mode').onchange=modeChanged;for(const key of ['date','note','amount','debit','credit'])$('map-'+key).onchange=previewOff;
+ $('csv-encoding').onchange=()=>isOFX?loadOFX():loadCSV();$('csv-header').onchange=loadCSV;
+ function modeChanged(){const separate=$('csv-mode').value==='separate';$('single-amount-label').hidden=separate;$('debit-label').hidden=!separate;$('credit-label').hidden=!separate;$('kind-label').hidden=$('csv-mode').value!=='kind';previewOff();}
+ $('csv-mode').onchange=modeChanged;for(const key of ['date','note','amount','debit','credit','kind'])$('map-'+key).onchange=previewOff;
  function source(){const s=$('csv-source').value.trim();if(!s||s.length>80){$('csv-source').focus();toast('口座・カード名を入力してください。');return null;}return s;}
  $('csv-preview').onclick=()=>{
- const name=source();if(!name)return;const mapping={mode:$('csv-mode').value,source:name,header:$('csv-header').value};for(const key of ['date','note','amount','debit','credit'])mapping[key]=$('map-'+key).value;
- const cols=[mapping.date,...(mapping.mode==='separate'?[mapping.debit,mapping.credit].filter(x=>x!==''):[mapping.amount])];if(mapping.date===''||(mapping.mode==='separate'?mapping.debit===''&&mapping.credit==='':mapping.amount==='')){toast('日付と金額の列を指定してください。');return;}if(new Set(cols).size!==cols.length){toast('日付・入金・出金には異なる列を指定してください。');return;}
+ const name=source();if(!name)return;const mapping={mode:$('csv-mode').value,source:name,header:$('csv-header').value};for(const key of ['date','note','amount','debit','credit','kind'])mapping[key]=$('map-'+key).value;
+ if(mapping.mode==='kind'&&mapping.kind===''){toast('収入・支出の種類の列を指定してください。');return;}const cols=[...(mapping.mode==='kind'?[mapping.kind]:[]),mapping.date,...(mapping.mode==='separate'?[mapping.debit,mapping.credit].filter(x=>x!==''):[mapping.amount])];if(mapping.date===''||(mapping.mode==='separate'?mapping.debit===''&&mapping.credit==='':mapping.amount==='')){toast('日付と金額の列を指定してください。');return;}if(new Set(cols).size!==cols.length){toast('日付・入金・出金には異なる列を指定してください。');return;}
  const rows=mapCSV(csvRows.slice(Number(mapping.header)),mapping,getData().entries);candidates=rows.map(r=>({...r,entry:r.entry||{date:'',type:'expense',amount:0,note:(r.raw?.join(' ')||'').slice(0,500),category:'その他',source:name},selected:!!r.entry&&!r.duplicate,raw:r.raw?.join(' ')||''}));showReview(false);
  };
  function setBusy(value){busy=value;for(const id of ['csv-file','pdf-read','csv-source','pdf-from','pdf-to','pdf-method','pdf-password'])$(id).disabled=value;const image=file&&!/\.pdf$/i.test(file.name);if(!value&&image)for(const id of ['pdf-from','pdf-to','pdf-password','pdf-method'])$(id).disabled=true;$('pdf-cancel').hidden=!value;}
@@ -59,13 +66,13 @@ export function setupImporter({getData,persist,onImported,toast}){
  const td=document.createElement('td'),badge=document.createElement('span');td.append(badge);item.badge=badge;
  if(item.raw){const details=document.createElement('details'),summary=document.createElement('summary'),small=document.createElement('small');summary.textContent='元の読み取り';small.textContent=item.raw;details.append(summary,small);td.append(details);}tr.append(td);check.onchange=()=>{item.selected=check.checked;updateReview();};body.append(tr);
  }updateReview();}
- function updateReview(){const known=new Set(getData().entries.map(fingerprint));let invalid=0,duplicate=0,count=0,income=0,expense=0;
- for(const item of candidates){const error=rowError(item.entry);const key=fingerprint(item.entry);item.duplicate=known.has(key);if(!error)known.add(key);if(error){invalid++;item.selected=false;}if(item.duplicate)duplicate++;item.check.disabled=!!error;item.check.checked=item.selected;item.badge.textContent=error||(item.duplicate?'重複候補：要確認':'入力OK：内容を確認');item.badge.className=error?'review-error':item.duplicate?'review-warning':'review-ok';if(item.selected){count++;if(item.entry.type==='income')income+=item.entry.amount;else expense+=item.entry.amount;}}
+ function updateReview(){const known=createDuplicateTracker(getData().entries);let invalid=0,duplicate=0,count=0,income=0,expense=0;
+ for(const item of candidates){const error=rowError(item.entry);item.duplicate=known.has(item.entry);if(!error)known.add(item.entry);if(error){invalid++;item.selected=false;}if(item.duplicate)duplicate++;item.check.disabled=!!error;item.check.checked=item.selected;item.badge.textContent=error||(item.duplicate?'重複候補：要確認':'入力OK：内容を確認');item.badge.className=error?'review-error':item.duplicate?'review-warning':'review-ok';if(item.selected){count++;if(item.entry.type==='income')income+=item.entry.amount;else expense+=item.entry.amount;}}
  $('csv-summary').textContent=`候補 ${candidates.length}件 ／ 要修正 ${invalid}件 ／ 重複候補 ${duplicate}件 ／ 選択 ${count}件（支出 ${yen(expense)}・収入 ${yen(income)}）`;$('csv-confirm').disabled=count===0;$('csv-confirm').textContent=`選択した ${count}件を取り込む`;
  }
  $('csv-source').oninput=()=>{for(const item of candidates)item.entry.source=$('csv-source').value.trim();if(candidates.length)updateReview();};
  $('csv-select-all').onclick=()=>{updateReview();for(const item of candidates)item.selected=!rowError(item.entry)&&!item.duplicate;updateReview();};$('csv-select-none').onclick=()=>{for(const item of candidates)item.selected=false;updateReview();};
- $('import-add-row').onclick=()=>{const name=source();if(!name)return;candidates.push({entry:{date:'',amount:0,type:'expense',category:'その他',note:'',source:name},selected:false});showReview(!isCSV);$('csv-preview-rows').lastChild.querySelector('input[type=date]').focus();};
+ $('import-add-row').onclick=()=>{const name=source();if(!name)return;candidates.push({entry:{date:'',amount:0,type:'expense',category:'その他',note:'',source:name},selected:false});showReview(!isCSV&&!isOFX);$('csv-preview-rows').lastChild.querySelector('input[type=date]').focus();};
  $('csv-confirm').onclick=()=>{if(!source())return;updateReview();const selected=candidates.filter(c=>c.selected);if(!selected.length)return;if(selected.some(c=>c.duplicate)&&!confirm('重複候補が選択されています。同じ取引が二重に登録される可能性があります。取り込みますか？'))return;
  const entries=selected.map(c=>({...c.entry,id:crypto.randomUUID()}));const next={...getData(),entries:[...getData().entries,...entries]};if(!validData(next)){toast('取り込みできません。日付・金額・データ件数を確認してください。');return;}
  if(persist(next)){const latest=entries.reduce((a,e)=>e.date>a?e.date:a,'');previewOff();$('csv-dialog').close();onImported(latest);toast(`${entries.length}件の取引を取り込みました`);}
