@@ -1,7 +1,7 @@
 import {categories,validData,summary,csvCell,calculate} from './model.mjs';
 const $=id=>document.getElementById(id),key='kotsukotsu-money-v1',colors=['#c88c90','#dfb58c','#a9b59a','#c3adcd','#9ebac1','#d4c18b','#c7beb4'],icons=['🍚','🧺','🚃','🎨','🏠','🌷','✧'];
 let data={version:1,entries:[],budgets:{}},storageReady=true;try{const raw=localStorage.getItem(key);if(raw){const parsed=JSON.parse(raw);if(!validData(parsed))throw Error();data=parsed;}}catch{storageReady=false;}
-const now=new Date(),localDate=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;let view=new Date(now.getFullYear(),now.getMonth(),1);const monthKey=()=>localDate(view).slice(0,7),yen=v=>'¥'+v.toLocaleString('ja-JP');let timer;function toast(msg){$('toast').textContent=msg;$('toast').classList.add('visible');clearTimeout(timer);const el=$('toast');timer=setTimeout(()=>el.classList.remove('visible'),3500);}
+const now=new Date(),localDate=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;let view=new Date(now.getFullYear(),now.getMonth(),1);const monthKey=()=>localDate(view).slice(0,7),yen=v=>'¥'+v.toLocaleString('ja-JP');let timer;function toast(msg){const el=$('toast');const host=document.querySelector('dialog[open]')||document.body;if(el.parentElement!==host)host.append(el);el.textContent=msg;el.classList.add('visible');clearTimeout(timer);timer=setTimeout(()=>el.classList.remove('visible'),5000);}
 function persist(next){if(!storageReady){toast('保存領域を読み込めません。ブラウザの設定を確認してください。');return false;}try{localStorage.setItem(key,JSON.stringify(next));data=next;return true;}catch{toast('保存できませんでした。ブラウザの空き容量をご確認ください。');return false;}}
 function type(){return document.querySelector('input[name=type]:checked').value;}function options(){const s=$('category');s.replaceChildren(...categories[type()].map(c=>new Option(c,c)));}
 function reset(){ $('entry-form').reset();$('edit-id').value='';$('date').value=localDate(now);$('save').textContent='＋ 記録を追加';$('cancel-edit').hidden=true;options();}
@@ -30,3 +30,5 @@ $('calc-expression').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preven
 
 import {setupReceipts} from './receipt-ui.mjs';
 setupReceipts({getData:()=>data,persist,onImported:date=>{view=new Date(Number(date.slice(0,4)),Number(date.slice(5,7))-1,1);render();},toast});
+
+window.dispatchEvent(new window.Event('money-ready'));
