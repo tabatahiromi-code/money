@@ -1,0 +1,13 @@
+export const categories={expense:['食費','日用品','交通','趣味・娯楽','住まい','美容・健康','その他'],income:['給与','副収入','臨時収入','その他']};
+export function validData(d){return !!d&&d.version===1&&Array.isArray(d.entries)&&d.entries.length<=100000&&d.entries.every(e=>typeof e.id==='string'&&['expense','income'].includes(e.type)&&Number.isSafeInteger(e.amount)&&e.amount>0&&e.amount<=999999999&&typeof e.date==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(e.date)&&!isNaN(Date.parse(e.date))&&new Date(e.date).toISOString().slice(0,10)===e.date&&categories[e.type].includes(e.category)&&typeof e.note==='string'&&e.note.length<=500&&(e.source===undefined||(typeof e.source==='string'&&e.source.length<=80)))&&new Set(d.entries.map(e=>e.id)).size===d.entries.length&&!!d.budgets&&typeof d.budgets==='object'&&!Array.isArray(d.budgets)&&Object.entries(d.budgets).every(([k,v])=>/^\d{4}-(0[1-9]|1[0-2])$/.test(k)&&Number.isSafeInteger(v)&&v>0&&v<=999999999);}
+export function summary(entries,month){const rows=entries.filter(e=>e.date.startsWith(month));const income=rows.filter(e=>e.type==='income').reduce((s,e)=>s+e.amount,0),expense=rows.filter(e=>e.type==='expense').reduce((s,e)=>s+e.amount,0);return {rows,income,expense,balance:income-expense};}
+export function csvCell(v){let s=String(v);if(/^[=+\-@\t\r]/.test(s))s="'"+s;return '"'+s.replaceAll('"','""')+'"';}
+export function calculate(expression){
+ const text=expression.replaceAll('×','*').replaceAll('÷','/').replaceAll('−','-').replace(/\s/g,'');
+ if(!text||text.length>150||/[^\d.+*/()\-]/.test(text))throw Error('式を確認してください');
+ const tokens=text.match(/(?:\d+\.?\d*|\.\d+)|[+*/()\-]/g)||[];if(tokens.join('')!==text)throw Error('式を確認してください');let i=0;
+ function atom(){const t=tokens[i++];if(t==='+')return atom();if(t==='-')return -atom();if(t==='('){const v=sum();if(tokens[i++]!==')')throw Error('かっこを確認してください');return v;}if(t===undefined||! /^(?:\d+\.?\d*|\.\d+)$/.test(t))throw Error('式を確認してください');return Number(t);}
+ function product(){let n=atom();while(tokens[i]==='*'||tokens[i]==='/'){const op=tokens[i++],v=atom();if(op==='/'&&v===0)throw Error('0では割れません');n=op==='*'?n*v:n/v;}return n;}
+ function sum(){let n=product();while(tokens[i]==='+'||tokens[i]==='-'){const op=tokens[i++],v=product();n=op==='+'?n+v:n-v;}return n;}
+ const result=sum();if(i!==tokens.length||!Number.isFinite(result)||Math.abs(result)>999999999)throw Error('計算できる範囲を超えています');return Math.round(result*1e8)/1e8;
+}
